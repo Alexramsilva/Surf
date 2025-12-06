@@ -7,255 +7,194 @@ Original file is located at
     https://colab.research.google.com/drive/1TLsH40EaVazpxNndR8h2ugCyffLoDXsZ
 """
 
-# app_allocation_pitch.py
-"""
-MiPyME Credit Allocation (Pitch-ready)
-- Entrena una MLP pequeña en datos sintéticos (rápido, cacheado)
-- Predice probabilidad de acceso/repago
-- Asigna un número limitado de créditos optimizando probabilidad + IIC + equidad por polos/estados
-- UI rápida y visual para pitch
-Requisitos: streamlit, pandas, numpy, scikit-learn, plotly
-"""
+# app.py
+# ---------------------------------------------------------
+# MiPyME Conecta - Asignación Eficiente de Crédito
+# Economía Circular + Polos de Desarrollo + Random Forest
+# Versión optimizada para pitch (ULTRA RÁPIDA)
+# ---------------------------------------------------------
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
-from sklearn.neural_network import MLPClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import roc_auc_score, accuracy_score
+from sklearn.metrics import accuracy_score
+import plotly.express as px
 
-st.set_page_config(layout="wide", page_title="Asignación Eficiente de Créditos - Pitch")
-st.title("Asignación eficiente de créditos a MiPyMEs — (Pitch-ready)")
+st.set_page_config(layout="wide", page_title="Asignación Inteligente de Crédito MiPyME")
 
-# ----------------------------
-# 1) Datos sintéticos (cacheados)
-# ----------------------------
-@st.cache_data
-def generate_synthetic(n=800, seed=42):
-    np.random.seed(seed)
-    estados = ['CDMX','Jalisco','Nuevo León','Puebla','Oaxaca','Veracruz','Chiapas','Yucatán','Guanajuato','Baja California']
-    polos = {
-        'Centro': ['CDMX','Puebla'],
-        'Occidente': ['Jalisco','Guanajuato'],
-        'Norte': ['Nuevo León','Baja California'],
-        'Sureste': ['Oaxaca','Chiapas','Yucatán'],
-        'Golfo': ['Veracruz']
-    }
-    sectores = ['Manufactura','Comercio','Servicios','Agro']
-    df = pd.DataFrame({
-        'id': np.arange(n),
-        'estado': np.random.choice(estados, n, p=None),
-        'sector': np.random.choice(sectores, n),
-        'ventas': np.round(np.random.lognormal(mean=10, sigma=1, size=n)),
-        'empleados': np.random.poisson(5, n),
-        'lider_mujer': np.random.binomial(1, 0.35, n),
-        'recicla_pct': np.round(np.random.beta(2,5,n),2),
-        'digital_score': np.round(np.random.beta(2,2,n),2),
-        'factura_e': np.random.binomial(1, 0.5, n),
-        'ventas_online_pct': np.round(np.random.beta(1.5,4,n),2),
-    })
-    # map estado -> polo
-    inv_map = {}
-    for p, states in polos.items():
-        for s in states:
-            inv_map[s] = p
-    df['polo'] = df['estado'].map(lambda x: inv_map.get(x, 'Otros'))
-    # construct target 'credito_actual' as noisy function
-    base_prob = (
-        0.25*df['digital_score'] +
-        0.20*df['factura_e'] +
-        0.15*df['recicla_pct'] +
-        0.10*(np.log1p(df['ventas'])/np.log1p(df['ventas']).max()) +
-        0.10*(df['empleados']/ (df['empleados'].max()+1)) +
-        0.10*df['lider_mujer']
-    )
-    noise = np.random.normal(0, 0.05, size=n)
-    prob = np.clip(base_prob + noise, 0, 1)
-    df['prob_credit_true'] = prob
-    df['credito_actual'] = (prob > np.quantile(prob, 0.68)).astype(int)
-    return df
-
-df_base = generate_synthetic()
-
-# ----------------------------
-# 2) Entrenamiento rápido de la MLP (cache_resource para no reentrenar)
-# ----------------------------
-@st.cache_resource
-def train_light_mlp(df, random_state=42):
-    features = ['ventas','empleados','recicla_pct','digital_score','factura_e','ventas_online_pct','lider_mujer']
-    X = df[features].copy()
-    X['ventas_log'] = np.log1p(X['ventas'])
-    X = X.drop(columns=['ventas'])
-    y = df['credito_actual']
-    # quick train-test split
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=random_state)
-    scaler = StandardScaler()
-    X_train_s = scaler.fit_transform(X_train)
-    X_test_s = scaler.transform(X_test)
-    clf = MLPClassifier(hidden_layer_sizes=(24,12), max_iter=150, early_stopping=True, random_state=random_state)
-    clf.fit(X_train_s, y_train)
-    y_proba = clf.predict_proba(X_test_s)[:,1]
-    auc = roc_auc_score(y_test, y_proba)
-    acc = accuracy_score(y_test, (y_proba>0.5).astype(int))
-    return scaler, clf, auc, acc
-
-scaler, clf, auc, acc = train_light_mlp(df_base)
-st.sidebar.markdown(f"**Modelo entrenado (rápido)** — AUC: {auc:.3f}, Acc: {acc:.3f}")
-
-# ----------------------------
-# 3) UI: parámetros del pitch / restricciones de asignación
-# ----------------------------
-st.sidebar.header("Parámetros de asignación (Pitch)")
-budget = st.sidebar.number_input("Créditos disponibles (cupos)", min_value=1, max_value=500, value=40)
-alpha = st.sidebar.slider("Peso: Probabilidad de repago (modelo)", 0.0, 1.0, 0.6)    # importance of model probability
-beta = st.sidebar.slider("Peso: Economía circular (IIC)", 0.0, 1.0, 0.25)
-gamma = st.sidebar.slider("Peso: Prioridad por polos (favorecer polos objetivos)", 0.0, 1.0, 0.1)
-gender_boost = st.sidebar.slider("Bono a empresas lideradas por mujeres (0-0.4)", 0.0, 0.4, 0.05)
-
-# constraint: max share per state to enforce geographic spread
-max_share_state = st.sidebar.slider("Máx % por estado (para evitar concentración)", 0.05, 0.50, 0.20)
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("💡 Consejo: para el pitch, mantén el budget pequeño (20-60) y muestra cómo la política cambia la asignación.")
-
-# ----------------------------
-# 4) Prepare data, compute IIC and model scores
-# ----------------------------
-df = df_base.copy()
-# IIC: composite index for circular integration (0-1)
-df['score_circular'] = (df['recicla_pct'] + df['ventas_online_pct'])/2
-df['score_digital'] = df['digital_score']
-df['score_formal'] = df['factura_e']
-df['score_gender'] = df['lider_mujer']
-w_circ, w_dig, w_form, w_gen = 0.4, 0.3, 0.2, 0.1
-df['IIC'] = (w_circ*df['score_circular'] + w_dig*df['score_digital'] + w_form*df['score_formal'] + w_gen*df['score_gender'])
-
-# Model probability (inference)
-def predict_proba_df(df, scaler, clf):
-    X = df[['ventas','empleados','recicla_pct','digital_score','factura_e','ventas_online_pct','lider_mujer']].copy()
-    X['ventas_log'] = np.log1p(X['ventas'])
-    X = X.drop(columns=['ventas'])
-    X_s = scaler.transform(X)
-    return clf.predict_proba(X_s)[:,1]
-
-df['model_prob'] = predict_proba_df(df, scaler, clf)
-
-# ----------------------------
-# 5) Priority score & allocation algorithm (greedy + constraints)
-# ----------------------------
-# compute polo priority factor: user may highlight some polos (for pitch we compute a simple boosting for 'Centro' and 'Occidente')
-priority_polos_default = st.sidebar.multiselect("Polo(s) prioritarios (boost)", options=df['polo'].unique().tolist(), default=['Centro'])
-polo_boost_map = {p: (1.0 + 0.15) if p in priority_polos_default else 1.0 for p in df['polo'].unique()}
-
-df['polo_boost'] = df['polo'].map(polo_boost_map)
-
-# compute combined score (normalized)
-# normalize fields to 0-1
-def minmax(series):
-    if series.max() == series.min():
-        return series*0.0
-    return (series - series.min())/(series.max()-series.min())
-
-df['s_model'] = minmax(df['model_prob'])
-df['s_iic'] = minmax(df['IIC'])
-df['s_polo'] = minmax(df['polo_boost'])  # polo boost is small discrete
-df['s_gender'] = df['lider_mujer']  # already 0/1
-
-# combined priority score
-df['priority_score'] = (
-    alpha * df['s_model'] +
-    beta * df['s_iic'] +
-    gamma * df['s_polo'] +
-    gender_boost * df['s_gender']
-)
-
-# Greedy allocation with per-state cap
-def allocate_greedy(df, budget, max_share_state):
-    # copy and sort by score desc
-    df_sorted = df.sort_values('priority_score', ascending=False).copy().reset_index(drop=True)
-    allocation = []
-    state_counts = {}
-    max_per_state = max(1, int(np.ceil(budget * max_share_state)))
-    for idx, row in df_sorted.iterrows():
-        st_name = row['estado']
-        if len(allocation) >= budget:
-            break
-        if state_counts.get(st_name, 0) >= max_per_state:
-            continue  # skip to avoid concentration
-        allocation.append(row['id'])
-        state_counts[st_name] = state_counts.get(st_name, 0) + 1
-    # If we didn't fill budget due to strict caps, relax caps and fill by score
-    if len(allocation) < budget:
-        remaining = df_sorted[~df_sorted['id'].isin(allocation)]
-        needed = budget - len(allocation)
-        allocation += remaining['id'].tolist()[:needed]
-    return allocation
-
-selected_ids = allocate_greedy(df, budget, max_share_state)
-
-df['selected'] = df['id'].isin(selected_ids).astype(int)
-
-# ----------------------------
-# 6) Output & Visuals
-# ----------------------------
-st.subheader("🔎 Resumen y visualización")
-
-colA, colB = st.columns([2,1])
-
-with colA:
-    fig = px.histogram(df, x='priority_score', nbins=30, title='Distribución de prioridad (score compuesto)')
-    st.plotly_chart(fig, use_container_width=True)
-    fig2 = px.scatter(df, x='model_prob', y='IIC', color='selected', hover_data=['estado','polo','sector'], title='Probabilidad (modelo) vs IIC (seleccionados en color)')
-    st.plotly_chart(fig2, use_container_width=True)
-
-with colB:
-    st.metric("Créditos disponibles", f"{budget}")
-    st.metric("Créditos asignados", f"{df['selected'].sum()}")
-    # breakdown by state for selected
-    sel_by_state = df[df['selected']==1].groupby('estado').agg({'id':'count'}).rename(columns={'id':'asignados'}).reset_index()
-    st.table(sel_by_state.sort_values('asignados', ascending=False).head(10))
-
-st.subheader("📋 Tabla de asignación (top seleccionados)")
-display_cols = ['id','estado','polo','sector','ventas','empleados','lider_mujer','IIC','model_prob','priority_score','selected']
-st.dataframe(df.sort_values('priority_score', ascending=False)[display_cols].head(50))
-
-# ----------------------------
-# 7) Metrics to show impact & fairness (for pitch)
-# ----------------------------
-st.subheader("📐 Métricas de impacto y equidad (pitch)")
-total_selected = df['selected'].sum()
-avg_prob_selected = df.loc[df['selected']==1, 'model_prob'].mean()
-avg_IIC_selected = df.loc[df['selected']==1, 'IIC'].mean()
-women_share_selected = df.loc[df['selected']==1, 'lider_mujer'].mean()
-
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Prom prob (selected)", f"{avg_prob_selected:.2%}")
-col2.metric("Prom IIC (selected)", f"{avg_IIC_selected:.3f}")
-col3.metric("% lideradas por mujeres (selected)", f"{women_share_selected:.2%}")
-col4.metric("Estados representados", f"{df.loc[df['selected']==1,'estado'].nunique()}")
-
-# ----------------------------
-# 8) Export selection (CSV)
-# ----------------------------
-st.subheader("💾 Exportar selección")
-if st.button("Descargar CSV con asignación"):
-    to_export = df[df['selected']==1].copy()
-    to_export = to_export[display_cols]
-    csv = to_export.to_csv(index=False).encode('utf-8')
-    st.download_button(label="Descargar CSV", data=csv, file_name="asignacion_creditos_selected.csv", mime="text/csv")
-
-# ----------------------------
-# 9) Notes for the pitch
-# ----------------------------
-st.markdown("---")
-st.markdown("**Notas para el pitch (hablar rápido):**")
+st.title("💳 Asignación Inteligente de Crédito para MiPyMEs")
 st.markdown("""
-- El modelo predice probabilidad de acceso/restitución de crédito (inferido con red neuronal entrenada offline en datos históricos sintéticos/administrativos).
-- La asignación optimiza una combinación: **probabilidad de repago (modelo) + mérito de economía circular (IIC) + prioridad por polos + perspectiva de género**.
-- Para evitar concentración, aplicamos un **límite por estado** (parámetro `Máx % por estado`) que garantiza dispersión geográfica y fomenta polos locales.
-- En producción usaríamos el mismo pipeline: **entrenamiento offline** + **modelo cargado en inferencia**. Aquí demostramos la lógica completa y las métricas en < 5 s.
+Plataforma de **IA ligera** para priorizar MiPyMEs con:
+- 🌱 Economía Circular
+- 📍 Polos de Desarrollo
+- 👩 Liderazgo Femenino
+- 🏦 Alta probabilidad de acceso a crédito
 """)
 
-st.caption("Prototipo rápido: para producción se recomienda validar con datos reales, auditar sesgos y realizar optimización entera (programación lineal entera) para restricciones complejas.")
+# ---------------------------------------------------------
+# GENERADOR DE DATOS RÁPIDO (para el pitch)
+# ---------------------------------------------------------
+@st.cache_data
+def generate_sample(n=2000, seed=42):
+    np.random.seed(seed)
+    estados = ['CDMX','Jalisco','Nuevo León','Puebla','Oaxaca','Veracruz']
+    sectores = ['Manufactura','Comercio','Servicios','Agro']
+
+    df = pd.DataFrame({
+        'estado': np.random.choice(estados, n),
+        'sector': np.random.choice(sectores, n),
+        'ventas': np.random.lognormal(mean=10, sigma=1, size=n),
+        'empleados': np.random.poisson(6, n),
+        'lider_mujer': np.random.binomial(1, 0.35, n),
+        'recicla_pct': np.random.beta(2,5,n),
+        'digital_score': np.random.beta(2,2,n),
+        'factura_e': np.random.binomial(1, 0.5, n),
+        'ventas_online_pct': np.random.beta(1.5,4,n),
+    })
+
+    score = (
+        0.25 * df['digital_score'] +
+        0.25 * df['factura_e'] +
+        0.2  * df['recicla_pct'] +
+        0.15 * df['lider_mujer'] +
+        0.15 * np.log1p(df['ventas'])
+    )
+
+    df['credito'] = (score > score.quantile(0.7)).astype(int)
+    return df
+
+df = generate_sample()
+
+# ---------------------------------------------------------
+# ENTRENAMIENTO ULTRA RÁPIDO CON RANDOM FOREST
+# ---------------------------------------------------------
+@st.cache_resource
+def train_model(df):
+    features = [
+        'ventas','empleados','recicla_pct','digital_score',
+        'factura_e','ventas_online_pct','lider_mujer'
+    ]
+
+    X = df[features]
+    y = df['credito']
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.25, random_state=42
+    )
+
+    model = RandomForestClassifier(
+        n_estimators=120,
+        max_depth=8,
+        random_state=42
+    )
+
+    model.fit(X_train, y_train)
+
+    acc = accuracy_score(y_test, model.predict(X_test))
+    return model, acc, features
+
+model, acc, FEATURES = train_model(df)
+
+# ---------------------------------------------------------
+# MÉTRICAS GENERALES
+# ---------------------------------------------------------
+st.subheader("📊 Estado Actual del Crédito")
+col1, col2 = st.columns(2)
+with col1:
+    st.metric("Precisión del modelo IA", f"{acc:.2%}")
+with col2:
+    st.metric("MiPyMEs con crédito", f"{df['credito'].mean()*100:.2f}%")
+
+# ---------------------------------------------------------
+# ÍNDICE DE ECONOMÍA CIRCULAR
+# ---------------------------------------------------------
+df['indice_circular'] = (
+    0.4*df['recicla_pct'] +
+    0.4*df['ventas_online_pct'] +
+    0.2*df['digital_score']
+)
+
+fig1 = px.histogram(df, x='indice_circular', nbins=25,
+                     title="Distribución del Índice de Economía Circular")
+st.plotly_chart(fig1, use_container_width=True)
+
+# ---------------------------------------------------------
+# POLOS DE DESARROLLO
+# ---------------------------------------------------------
+state_agg = df.groupby('estado').agg({
+    'credito':'mean',
+    'indice_circular':'mean',
+    'ventas':'count'
+}).reset_index().rename(columns={'ventas':'empresas'})
+
+fig2 = px.scatter(
+    state_agg,
+    x='empresas',
+    y='indice_circular',
+    size='empresas',
+    color='credito',
+    hover_name='estado',
+    title="Polos de Desarrollo: Empresas vs Economía Circular"
+)
+
+st.plotly_chart(fig2, use_container_width=True)
+
+# ---------------------------------------------------------
+# EVALUADOR DE CRÉDITO MIpyME (IA en tiempo real)
+# ---------------------------------------------------------
+st.subheader("✅ Evaluación Inteligente de Crédito (IA en Tiempo Real)")
+
+with st.form("evaluacion"):
+    ventas = st.number_input("Ventas anuales (MXN)", value=1_000_000)
+    empleados = st.number_input("Empleados", value=6)
+    recicla = st.slider("Economía circular", 0.0, 1.0, 0.2)
+    digital = st.slider("Digitalización", 0.0, 1.0, 0.3)
+    factura = st.selectbox("Factura electrónica", [0,1])
+    online = st.slider("Ventas online", 0.0, 1.0, 0.1)
+    mujer = st.selectbox("Liderazgo femenino", [0,1])
+
+    evaluar = st.form_submit_button("Evaluar con IA")
+
+    if evaluar:
+        x = pd.DataFrame([[
+            ventas, empleados, recicla, digital,
+            factura, online, mujer
+        ]], columns=FEATURES)
+
+        prob = model.predict_proba(x)[0,1]
+        st.success(f"🔮 Probabilidad estimada de crédito: {prob:.2%}")
+
+# ---------------------------------------------------------
+# SIMULADOR DE POLÍTICA PÚBLICA
+# ---------------------------------------------------------
+st.subheader("📈 Simulador de Impacto en Acceso a Crédito")
+
+capacitacion = st.slider("Cobertura de capacitación digital (%)", 0, 50, 10)
+impacto = 0.002 * capacitacion
+
+actual = df['credito'].mean()
+proyectado = actual + impacto
+
+st.write(f"Acceso actual: {actual:.2%}")
+st.write(f"Acceso proyectado: {proyectado:.2%}")
+
+if proyectado - actual >= 0.035:
+    st.success("✅ Se cumple la meta anual del +3.5%")
+else:
+    st.warning("⚠️ No se alcanza la meta del +3.5%")
+
+# ---------------------------------------------------------
+# IMPORTANCIA DE VARIABLES (EXPLICABILIDAD)
+# ---------------------------------------------------------
+st.subheader("🧠 Variables más importantes para otorgar crédito")
+
+imp = pd.DataFrame({
+    'Variable': FEATURES,
+    'Importancia': model.feature_importances_
+}).sort_values(by='Importancia', ascending=False)
+
+st.dataframe(imp)
+
+st.caption("Modelo basado en Random Forest optimizado para despliegue rápido en servidores gratuitos.")
