@@ -12,6 +12,7 @@ Original file is located at
 # MiPyME Conecta - Asignación Eficiente de Crédito
 # Economía Circular + Polos de Desarrollo + Random Forest
 # Versión optimizada para pitch (ULTRA RÁPIDA)
+# Con Login de Usuario
 # ---------------------------------------------------------
 
 import streamlit as st
@@ -22,179 +23,21 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import plotly.express as px
 
+# ---------------------------------------------------------
+# CONFIGURACIÓN GENERAL
+# ---------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Asignación Inteligente de Crédito MiPyME")
 
-st.title("💳 Asignación Inteligente de Crédito para MiPyMEs")
-st.markdown("""
-Plataforma de **IA ligera** para priorizar MiPyMEs con:
-- 🌱 Economía Circular
-- 📍 Polos de Desarrollo
-- 👩 Liderazgo Femenino
-- 🏦 Alta probabilidad de acceso a crédito
-""")
-
 # ---------------------------------------------------------
-# GENERADOR DE DATOS RÁPIDO (para el pitch)
+# LOGIN SIMPLE (USUARIO Y CLAVE)
 # ---------------------------------------------------------
-@st.cache_data
-def generate_sample(n=2000, seed=42):
-    np.random.seed(seed)
-    estados = ['CDMX','Jalisco','Nuevo León','Puebla','Oaxaca','Veracruz']
-    sectores = ['Manufactura','Comercio','Servicios','Agro']
+USUARIOS = {
+    "admin": "1234",
+    "pitch": "demo2025",
+    "invitado": "credito"
+}
 
-    df = pd.DataFrame({
-        'estado': np.random.choice(estados, n),
-        'sector': np.random.choice(sectores, n),
-        'ventas': np.random.lognormal(mean=10, sigma=1, size=n),
-        'empleados': np.random.poisson(6, n),
-        'lider_mujer': np.random.binomial(1, 0.35, n),
-        'recicla_pct': np.random.beta(2,5,n),
-        'digital_score': np.random.beta(2,2,n),
-        'factura_e': np.random.binomial(1, 0.5, n),
-        'ventas_online_pct': np.random.beta(1.5,4,n),
-    })
-
-    score = (
-        0.25 * df['digital_score'] +
-        0.25 * df['factura_e'] +
-        0.2  * df['recicla_pct'] +
-        0.15 * df['lider_mujer'] +
-        0.15 * np.log1p(df['ventas'])
-    )
-
-    df['credito'] = (score > score.quantile(0.7)).astype(int)
-    return df
-
-df = generate_sample()
-
-# ---------------------------------------------------------
-# ENTRENAMIENTO ULTRA RÁPIDO CON RANDOM FOREST
-# ---------------------------------------------------------
-@st.cache_resource
-def train_model(df):
-    features = [
-        'ventas','empleados','recicla_pct','digital_score',
-        'factura_e','ventas_online_pct','lider_mujer'
-    ]
-
-    X = df[features]
-    y = df['credito']
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.25, random_state=42
-    )
-
-    model = RandomForestClassifier(
-        n_estimators=120,
-        max_depth=8,
-        random_state=42
-    )
-
-    model.fit(X_train, y_train)
-
-    acc = accuracy_score(y_test, model.predict(X_test))
-    return model, acc, features
-
-model, acc, FEATURES = train_model(df)
-
-# ---------------------------------------------------------
-# MÉTRICAS GENERALES
-# ---------------------------------------------------------
-st.subheader("📊 Estado Actual del Crédito")
-col1, col2 = st.columns(2)
-with col1:
-    st.metric("Precisión del modelo IA", f"{acc:.2%}")
-with col2:
-    st.metric("MiPyMEs con crédito", f"{df['credito'].mean()*100:.2f}%")
-
-# ---------------------------------------------------------
-# ÍNDICE DE ECONOMÍA CIRCULAR
-# ---------------------------------------------------------
-df['indice_circular'] = (
-    0.4*df['recicla_pct'] +
-    0.4*df['ventas_online_pct'] +
-    0.2*df['digital_score']
-)
-
-fig1 = px.histogram(df, x='indice_circular', nbins=25,
-                     title="Distribución del Índice de Economía Circular")
-st.plotly_chart(fig1, use_container_width=True)
-
-# ---------------------------------------------------------
-# POLOS DE DESARROLLO
-# ---------------------------------------------------------
-state_agg = df.groupby('estado').agg({
-    'credito':'mean',
-    'indice_circular':'mean',
-    'ventas':'count'
-}).reset_index().rename(columns={'ventas':'empresas'})
-
-fig2 = px.scatter(
-    state_agg,
-    x='empresas',
-    y='indice_circular',
-    size='empresas',
-    color='credito',
-    hover_name='estado',
-    title="Polos de Desarrollo: Empresas vs Economía Circular"
-)
-
-st.plotly_chart(fig2, use_container_width=True)
-
-# ---------------------------------------------------------
-# EVALUADOR DE CRÉDITO MIpyME (IA en tiempo real)
-# ---------------------------------------------------------
-st.subheader("✅ Evaluación Inteligente de Crédito (IA en Tiempo Real)")
-
-with st.form("evaluacion"):
-    ventas = st.number_input("Ventas anuales (MXN)", value=1_000_000)
-    empleados = st.number_input("Empleados", value=6)
-    recicla = st.slider("Economía circular", 0.0, 1.0, 0.2)
-    digital = st.slider("Digitalización", 0.0, 1.0, 0.3)
-    factura = st.selectbox("Factura electrónica", [0,1])
-    online = st.slider("Ventas online", 0.0, 1.0, 0.1)
-    mujer = st.selectbox("Liderazgo femenino", [0,1])
-
-    evaluar = st.form_submit_button("Evaluar con IA")
-
-    if evaluar:
-        x = pd.DataFrame([[
-            ventas, empleados, recicla, digital,
-            factura, online, mujer
-        ]], columns=FEATURES)
-
-        prob = model.predict_proba(x)[0,1]
-        st.success(f"🔮 Probabilidad estimada de crédito: {prob:.2%}")
-
-# ---------------------------------------------------------
-# SIMULADOR DE POLÍTICA PÚBLICA
-# ---------------------------------------------------------
-st.subheader("📈 Simulador de Impacto en Acceso a Crédito")
-
-capacitacion = st.slider("Cobertura de capacitación digital (%)", 0, 50, 10)
-impacto = 0.002 * capacitacion
-
-actual = df['credito'].mean()
-proyectado = actual + impacto
-
-st.write(f"Acceso actual: {actual:.2%}")
-st.write(f"Acceso proyectado: {proyectado:.2%}")
-
-if proyectado - actual >= 0.035:
-    st.success("✅ Se cumple la meta anual del +3.5%")
-else:
-    st.warning("⚠️ No se alcanza la meta del +3.5%")
-
-# ---------------------------------------------------------
-# IMPORTANCIA DE VARIABLES (EXPLICABILIDAD)
-# ---------------------------------------------------------
-st.subheader("🧠 Variables más importantes para otorgar crédito")
-
-imp = pd.DataFrame({
-    'Variable': FEATURES,
-    'Importancia': model.feature_importances_
-}).sort_values(by='Importancia', ascending=False)
-
-st.dataframe(imp)
-
-st.caption("Modelo basado en Random Forest optimizado para despliegue rápido en servidores gratuitos.")
+def login():
+    st.title("🔐 Acceso a MiPyME Conecta")
+    usuario = st.text_input("Usuario")
+    clave = st.text_input("Contra_
