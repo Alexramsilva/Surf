@@ -7,8 +7,8 @@ Original file is located at
     https://colab.research.google.com/drive/1TLsH40EaVazpxNndR8h2ugCyffLoDXsZ
 """
 
-# streamlit_app_economia_circular_mypymes.py
-# App: Economía circular, polos de desarrollo e incremento de créditos a MiPyMEs
+# streamlit_app_economia_circular_mypymes_optimized.py
+# App optimizada: Economía circular, polos de desarrollo e incremento de créditos a MiPyMEs
 # Requisitos: streamlit, pandas, numpy, scikit-learn, plotly
 
 import streamlit as st
@@ -20,16 +20,19 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score
 import plotly.express as px
 
-st.set_page_config(layout="wide", page_title="MiPyME Circular & Crédito")
+st.set_page_config(layout="wide", page_title="MiPyME Circular & Crédito (Optimizada)")
 
-st.title("MiPyME Conecta: Economía Circular, Polos de Desarrollo y Crédito")
+st.title("MiPyME Conecta: Economía Circular, Polos de Desarrollo y Crédito (Optimizada)")
 st.markdown(
-    "Plataforma prototipo para diagnosticar adopción de prácticas de economía circular, identificar polos locales de desarrollo y simular políticas para aumentar el acceso a crédito de MiPyMEs."
+    "Versión optimizada: caché para datos y modelo, menos recálculos al mover sliders, y entrenamiento una sola vez por dataset."
 )
 
 # --- Sidebar ---
 st.sidebar.header("Carga de datos / Parámetros")
-uploaded_file = st.sidebar.file_uploader("Sube CSV de MiPyMEs (columnas sugeridas: id, estado, sector, ventas, empleados, lider_mujer(0/1), recicla_pct, digital_score, factura_electronica(0/1), ventas_online_pct, credito_actual(0/1))", type=["csv"])
+uploaded_file = st.sidebar.file_uploader(
+    "Sube CSV de MiPyMEs (columnas sugeridas: id, estado, sector, ventas, empleados, lider_mujer(0/1), recicla_pct, digital_score, factura_e(0/1), ventas_online_pct, credito_actual(0/1))",
+    type=["csv"]
+)
 use_sample = False
 if uploaded_file is None:
     use_sample = st.sidebar.checkbox("Usar datos de ejemplo (rápido)", value=True)
@@ -46,7 +49,7 @@ st.sidebar.header("Simulador de políticas")
 capacitacion = st.sidebar.slider("% MiPyMEs que reciben capacitación digital (incremento)", 0, 50, 10)
 credit_access_increase = st.sidebar.slider("Meta anual adicional de acceso a crédito (%)", 0.0, 10.0, 3.5)
 
-# --- Data load / sample generation ---
+# --- Data load / sample generation (cached) ---
 @st.cache_data
 def generate_sample(n=2000, seed=42):
     np.random.seed(seed)
@@ -71,35 +74,38 @@ def generate_sample(n=2000, seed=42):
     df['prob_credit'] = (0.2*df['digital_score'] + 0.25*df['factura_e'] + 0.000001*df['ventas'] + 0.15*df['empleados'] + 0.05*df['lider_mujer'] + 0.1*df['recicla_pct'])
     df['prob_credit'] = (df['prob_credit'] - df['prob_credit'].min())/(df['prob_credit'].max()-df['prob_credit'].min())
     df['credito_actual'] = (df['prob_credit'] > np.quantile(df['prob_credit'], 0.72)).astype(int)
-    return df
+    return df.drop(columns=['prob_credit'])
 
-if use_sample:
-    df = generate_sample()
-else:
-    df = pd.read_csv(uploaded_file)
-    # basic cleaning: ensure columns exist
-    expected_cols = ['id','estado','sector','ventas','empleados','lider_mujer','recicla_pct','digital_score','factura_e','ventas_online_pct','credito_actual']
-    missing = [c for c in expected_cols if c not in df.columns]
-    if missing:
-        st.error(f"Faltan columnas en el CSV de entrada: {missing}")
-        st.stop()
+@st.cache_data
+def load_base_data(uploaded_file):
+    if uploaded_file is None:
+        return generate_sample()
+    else:
+        # read csv uploaded by user
+        df = pd.read_csv(uploaded_file)
+        # basic cleaning defaults (add missing cols with defaults if necessary)
+        expected_cols = ['id','estado','sector','ventas','empleados','lider_mujer','recicla_pct','digital_score','factura_e','ventas_online_pct','credito_actual']
+        for c in expected_cols:
+            if c not in df.columns:
+                # add reasonable default / placeholder
+                if c == 'id':
+                    df[c] = np.arange(len(df))
+                elif c in ['ventas','empleados','lider_mujer','factura_e','credito_actual']:
+                    df[c] = 0
+                else:
+                    df[c] = 0.0
+        return df[expected_cols]  # ensure order
 
-st.subheader("Datos cargados / de ejemplo")
-st.dataframe(df.head(10))
+df_base = load_base_data(uploaded_file)
 
-# --- Índice de Integración Circular (IIC) ---
+# --- Compute indices (cached per df + weights) ---
 @st.cache_data
 def compute_indices(df, weights):
-    # Normalize features
     df2 = df.copy()
-    # circular score: recicla_pct + ventas_online_pct (proxy for circular channels)
     df2['score_circular'] = (df2['recicla_pct'] + df2['ventas_online_pct'])/2
-    # digital score already 0-1
     df2['score_digital'] = df2['digital_score']
     df2['score_formal'] = df2['factura_e']
-    # gender boost: if lider mujer, increase score slightly
     df2['score_gender'] = df2['lider_mujer']
-    # composite index
     wsum = weights['circular'] + weights['digital'] + weights['formal'] + weights['gender']
     if wsum == 0:
         wsum = 1
@@ -111,9 +117,19 @@ def compute_indices(df, weights):
     )/wsum
     return df2
 
-df = compute_indices(df, weights)
+# compute df used in UI (this depends on weights, but base data generation won't rerun)
+df = compute_indices(df_base, weights)
 
-# --- Visualizaciones ---
+st.subheader("Datos cargados / de ejemplo")
+st.dataframe(df.head(10))
+
+# --- Aggregations & plots (cached to avoid recalculations repetidas) ---
+@st.cache_data
+def compute_state_agg(df):
+    return df.groupby('estado').agg({'IIC':'mean','credito_actual':'mean','id':'count'}).reset_index().rename(columns={'id':'n_empresas'})
+
+state_agg = compute_state_agg(df)
+
 st.subheader("Resumen nacional")
 col1, col2 = st.columns([2,1])
 with col1:
@@ -127,43 +143,81 @@ with col2:
     st.metric('% MiPyMEs con crédito', f"{pct_credit:.2f}%")
 
 st.subheader('Mapa / Polos de Desarrollo (por estado)')
-state_agg = df.groupby('estado').agg({'IIC':'mean','credito_actual':'mean','id':'count'}).reset_index().rename(columns={'id':'n_empresas'})
 fig2 = px.scatter(state_agg, x='n_empresas', y='IIC', size='n_empresas', hover_name='estado', color='credito_actual', title='Estados: tamaño del cluster vs IIC (color=porcentaje con crédito)')
 st.plotly_chart(fig2, use_container_width=True)
 
-# Highlight potential polos: high IIC and high firms
-polos = state_agg.sort_values(['IIC','n_empresas'], ascending=False).head(5)
+# Highlight potential polos: high IIC and high firms (cached)
+@st.cache_data
+def top_polos(state_agg, topn=5):
+    polos = state_agg.sort_values(['IIC','n_empresas'], ascending=False).head(topn)
+    return polos
+
+polos = top_polos(state_agg)
 st.markdown('**Polos candidatos (alto IIC + volumen):**')
 st.table(polos)
 
-# --- Modelo predictivo: probabilidad de acceso a crédito (pequeña NN) ---
-st.subheader('Modelo predictivo: Probabilidad de acceso a crédito (red neuronal)')
+# --- Modelo predictivo: entrenamiento (cacheado por dataset) ---
+# Features used for the model (must exist in df_base)
 features = ['ventas','empleados','recicla_pct','digital_score','factura_e','ventas_online_pct','lider_mujer']
-X = df[features].copy()
-# basic preprocessing
-X['ventas_log'] = np.log1p(X['ventas'])
-X = X.drop(columns=['ventas'])
-y = df['credito_actual']
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
-scaler = StandardScaler()
-X_train_s = scaler.fit_transform(X_train)
-X_test_s = scaler.transform(X_test)
+def prepare_X_y_for_training(df):
+    X = df[features].copy()
+    X['ventas_log'] = np.log1p(X['ventas'])
+    X = X.drop(columns=['ventas'])
+    y = df['credito_actual']
+    return X, y
 
-clf = MLPClassifier(hidden_layer_sizes=(32,16), max_iter=300, random_state=42)
-clf.fit(X_train_s, y_train)
+X_full, y_full = prepare_X_y_for_training(df_base)
 
-y_pred = clf.predict(X_test_s)
-acc = accuracy_score(y_test, y_pred)
+# compute a simple data hash to let cache invalidate when dataset changes
+@st.cache_data
+def compute_data_hash(df, cols):
+    # Use pandas util hash for the selected columns (fast and sensitive to content changes)
+    try:
+        h = pd.util.hash_pandas_object(df[cols], index=True).sum()
+        return int(h)
+    except Exception:
+        # fallback: shape + sum of numeric columns
+        return int(df[cols].shape[0] + df[cols].select_dtypes(include=[np.number]).sum().sum())
+
+data_hash = compute_data_hash(df_base, features)
+
+@st.cache_resource
+def train_model_cached(df_hash, X_df, y_ser):
+    """
+    Entrena y devuelve: scaler, clf, acc, feat_imp_df
+    Nota: st.cache_resource requiere que el primer argumento (df_hash) cambie cuando el dataset cambia.
+    Para evitar pasar dataframes grandes como parámetros al caché, enviamos una copia pequeña (X_df, y_ser).
+    """
+    # Prepare arrays
+    X_train, X_test, y_train, y_test = train_test_split(X_df, y_ser, test_size=0.25, random_state=42)
+    scaler = StandardScaler()
+    X_train_s = scaler.fit_transform(X_train)
+    X_test_s = scaler.transform(X_test)
+
+    # MLP con early stopping y menos iteraciones para rapidez
+    clf = MLPClassifier(hidden_layer_sizes=(32,16), max_iter=200, early_stopping=True, random_state=42)
+    clf.fit(X_train_s, y_train)
+
+    y_pred = clf.predict(X_test_s)
+    acc = accuracy_score(y_test, y_pred)
+
+    # feature importance approximation
+    coefs = np.mean(np.abs(clf.coefs_[0]), axis=1)
+    feat_names = X_df.columns.tolist()
+    feat_imp = pd.DataFrame({'feature': feat_names, 'coef_abs_mean': coefs}).sort_values('coef_abs_mean', ascending=False)
+
+    return scaler, clf, acc, feat_imp
+
+# train (cached) - show spinner to user
+with st.spinner("Entrenando modelo (solo la primera vez por dataset) — esto puede tardar unos segundos..."):
+    scaler, clf, acc, feat_imp = train_model_cached(data_hash, X_full, y_full)
+
+st.subheader('Modelo predictivo: Probabilidad de acceso a crédito (red neuronal)')
 st.write(f"Accuracy (test): {acc:.3f}")
-
-# show feature importance via permutation-like coefficients (approx)
-coefs = np.mean(np.abs(clf.coefs_[0]), axis=1)
-feat_names = X.columns.tolist()
-feat_imp = pd.DataFrame({'feature': feat_names, 'coef_abs_mean': coefs}).sort_values('coef_abs_mean', ascending=False)
 st.table(feat_imp)
 
-# Interactive: evaluación de una MiPyME individual
+# --- Interactive: evaluación de una MiPyME individual (usa el modelo cacheado) ---
 st.subheader('Evalúa una MiPyME (individual)')
 with st.form('eval_form'):
     st.write('Rellena los datos para obtener probabilidad de crédito')
@@ -179,6 +233,7 @@ with st.form('eval_form'):
     submitted = st.form_submit_button('Evaluar')
     if submitted:
         x_in = pd.DataFrame({
+            'ventas':[s_ventas],
             'empleados':[s_empleados],
             'recicla_pct':[s_recicla],
             'digital_score':[s_digital],
@@ -186,42 +241,40 @@ with st.form('eval_form'):
             'ventas_online_pct':[s_ventas_online],
             'lider_mujer':[s_lider_mujer]
         })
-        x_in['ventas_log'] = np.log1p(s_ventas)
-        x_in = x_in[X.columns]
+        x_in['ventas_log'] = np.log1p(x_in['ventas'])
+        x_in = x_in.drop(columns=['ventas'])
+        # ensure column order matches training
+        x_in = x_in[X_full.columns]
         x_in_s = scaler.transform(x_in)
         prob = clf.predict_proba(x_in_s)[0,1]
         st.success(f'Probabilidad estimada de acceder a crédito: {prob:.2%}')
 
 # --- Simulador de impacto en acceso a crédito ---
-st.subheader('Simulador: impacto de políticas y meta anual de +3.5%')
+st.subheader('Simulador: impacto de políticas y meta anual')
 
 baseline_pct = df['credito_actual'].mean()
 st.write(f'Porcentaje base de MiPyMEs con crédito: {baseline_pct:.2%}')
 
-# Policy effects: simple linear model: each 10% de capacitacion -> +x% acceso
-policy_effect_per_10 = 0.015  # supongamos que cada 10pp de capacitación genera +1.5pp en acceso a crédito
+# Policy effects: simple linear model: cada 10% de capacitacion -> +x% acceso
+policy_effect_per_10 = 0.015  # cada 10pp de capacitación genera +1.5pp en acceso a crédito
 policy_effect = (capacitacion/10.0)*policy_effect_per_10
-
 projected_pct_after_policy = baseline_pct + policy_effect
 st.write(f'Proyección después de política (capacitación {capacitacion}%): {projected_pct_after_policy:.2%}')
 
-# Target annual increase
 target_increase = credit_access_increase/100.0
 st.write(f'Meta anual adicional solicitada: {credit_access_increase:.2f}%')
 
-# Check if projected meets target
 meets_target = (projected_pct_after_policy - baseline_pct) >= target_increase
 if meets_target:
     st.success(f'Con la política seleccionada se alcanza o supera la meta anual de {credit_access_increase:.2f}%')
 else:
-    st.warning('La política seleccionada NO alcanza la meta anual. Ajusta parámetros o añade medidas complementarias (crédito subsidiado, garantías, acompañamiento).')
+    st.warning('La política seleccionada NO alcanza la meta anual. Ajusta parámetros o añade medidas complementarias.')
 
-# Show simple multi-year projection
+# Multi-year projection (lightweight)
 years = st.slider('Años de proyección', 1, 10, 5)
 proj = []
 current = baseline_pct
 for t in range(1, years+1):
-    # apply both target growth and policy effect as additive for projection demonstration
     current = current * (1 + target_increase) + policy_effect
     proj.append({'year': t, 'pct_with_credit': current})
 proj_df = pd.DataFrame(proj)
@@ -243,4 +296,4 @@ for r in rec:
     st.write(r)
 
 st.markdown('---')
-st.caption('Prototipo rápido: el modelo y parámetros son ilustrativos. Para uso productivo se requiere limpieza exhaustiva, validación, y datos administrativos de crédito.')
+st.caption('Versión optimizada: el modelo y parámetros son ilustrativos. Para producción se requiere validación y datos administrativos.')
