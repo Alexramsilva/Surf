@@ -7,133 +7,194 @@ Original file is located at
     https://colab.research.google.com/drive/1TLsH40EaVazpxNndR8h2ugCyffLoDXsZ
 """
 
+# app.py
+# ---------------------------------------------------------
+# MiPyME Conecta - Asignación Eficiente de Crédito
+# Economía Circular + Polos de Desarrollo + Random Forest
+# Versión optimizada para pitch (ULTRA RÁPIDA)
+# ---------------------------------------------------------
+
 import streamlit as st
 import pandas as pd
 import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
 import plotly.express as px
 
-st.set_page_config(page_title="Crédito Inteligente MiPyME", layout="wide")
+st.set_page_config(layout="wide", page_title="Asignación Inteligente de Crédito MiPyME")
 
 st.title("💳 Asignación Inteligente de Crédito para MiPyMEs")
-st.success("Demo en tiempo real — IA para economía circular, polos de desarrollo y género")
-
 st.markdown("""
-Este prototipo prioriza MiPyMEs con:
-- 🌱 Economía circular
-- 📍 Polos de desarrollo
-- 👩 Liderazgo femenino
-- 💻 Digitalización
+Plataforma de **IA ligera** para priorizar MiPyMEs con:
+- 🌱 Economía Circular
+- 📍 Polos de Desarrollo
+- 👩 Liderazgo Femenino
+- 🏦 Alta probabilidad de acceso a crédito
 """)
 
-# -----------------------------
-# DATOS SINTÉTICOS MUY RÁPIDOS
-# -----------------------------
+# ---------------------------------------------------------
+# GENERADOR DE DATOS RÁPIDO (para el pitch)
+# ---------------------------------------------------------
 @st.cache_data
-def generar_datos(n=600):
-    np.random.seed(42)
-    estados = ['CDMX','Jalisco','NL','Puebla','Oaxaca','Veracruz']
+def generate_sample(n=2000, seed=42):
+    np.random.seed(seed)
+    estados = ['CDMX','Jalisco','Nuevo León','Puebla','Oaxaca','Veracruz']
+    sectores = ['Manufactura','Comercio','Servicios','Agro']
 
     df = pd.DataFrame({
-        "estado": np.random.choice(estados, n),
-        "ventas": np.random.randint(200_000, 5_000_000, n),
-        "empleados": np.random.randint(1, 50, n),
-        "recicla": np.random.rand(n),
-        "digital": np.random.rand(n),
-        "mujer": np.random.binomial(1, 0.35, n)
+        'estado': np.random.choice(estados, n),
+        'sector': np.random.choice(sectores, n),
+        'ventas': np.random.lognormal(mean=10, sigma=1, size=n),
+        'empleados': np.random.poisson(6, n),
+        'lider_mujer': np.random.binomial(1, 0.35, n),
+        'recicla_pct': np.random.beta(2,5,n),
+        'digital_score': np.random.beta(2,2,n),
+        'factura_e': np.random.binomial(1, 0.5, n),
+        'ventas_online_pct': np.random.beta(1.5,4,n),
     })
 
-    # MODELO INTELIGENTE SIMULADO (ultra rápido)
     score = (
-        0.35 * df["digital"] +
-        0.30 * df["recicla"] +
-        0.20 * df["mujer"] +
-        0.15 * np.log1p(df["ventas"])
+        0.25 * df['digital_score'] +
+        0.25 * df['factura_e'] +
+        0.2  * df['recicla_pct'] +
+        0.15 * df['lider_mujer'] +
+        0.15 * np.log1p(df['ventas'])
     )
 
-    df["credito"] = (score > score.quantile(0.7)).astype(int)
-    df["score"] = score
+    df['credito'] = (score > score.quantile(0.7)).astype(int)
     return df
 
-df = generar_datos()
+df = generate_sample()
 
-# -----------------------------
-# KPI PRINCIPALES
-# -----------------------------
-col1, col2, col3 = st.columns(3)
+# ---------------------------------------------------------
+# ENTRENAMIENTO ULTRA RÁPIDO CON RANDOM FOREST
+# ---------------------------------------------------------
+@st.cache_resource
+def train_model(df):
+    features = [
+        'ventas','empleados','recicla_pct','digital_score',
+        'factura_e','ventas_online_pct','lider_mujer'
+    ]
 
-col1.metric("MiPyMEs con crédito", f"{df['credito'].mean()*100:.1f}%")
-col2.metric("Empresas evaluadas", f"{len(df)}")
-col3.metric("Score promedio IA", f"{df['score'].mean():.3f}")
+    X = df[features]
+    y = df['credito']
 
-# -----------------------------
-# POLOS DE DESARROLLO (RÁPIDO)
-# -----------------------------
-st.subheader("📍 Polos de Desarrollo")
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.25, random_state=42
+    )
 
-polos = df.groupby("estado").agg(
-    empresas=("ventas","count"),
-    credito=("credito","mean"),
-    score=("score","mean")
-).reset_index()
+    model = RandomForestClassifier(
+        n_estimators=120,
+        max_depth=8,
+        random_state=42
+    )
 
-fig = px.scatter(
-    polos,
-    x="empresas",
-    y="score",
-    size="empresas",
-    color="credito",
-    hover_name="estado",
-    title="Estados Prioritarios para Crédito"
+    model.fit(X_train, y_train)
+
+    acc = accuracy_score(y_test, model.predict(X_test))
+    return model, acc, features
+
+model, acc, FEATURES = train_model(df)
+
+# ---------------------------------------------------------
+# MÉTRICAS GENERALES
+# ---------------------------------------------------------
+st.subheader("📊 Estado Actual del Crédito")
+col1, col2 = st.columns(2)
+with col1:
+    st.metric("Precisión del modelo IA", f"{acc:.2%}")
+with col2:
+    st.metric("MiPyMEs con crédito", f"{df['credito'].mean()*100:.2f}%")
+
+# ---------------------------------------------------------
+# ÍNDICE DE ECONOMÍA CIRCULAR
+# ---------------------------------------------------------
+df['indice_circular'] = (
+    0.4*df['recicla_pct'] +
+    0.4*df['ventas_online_pct'] +
+    0.2*df['digital_score']
 )
 
-st.plotly_chart(fig, use_container_width=True)
+fig1 = px.histogram(df, x='indice_circular', nbins=25,
+                     title="Distribución del Índice de Economía Circular")
+st.plotly_chart(fig1, use_container_width=True)
 
-# -----------------------------
-# EVALUADOR DE CRÉDITO EN VIVO
-# -----------------------------
-st.subheader("✅ Evaluación Inteligente de una MiPyME")
+# ---------------------------------------------------------
+# POLOS DE DESARROLLO
+# ---------------------------------------------------------
+state_agg = df.groupby('estado').agg({
+    'credito':'mean',
+    'indice_circular':'mean',
+    'ventas':'count'
+}).reset_index().rename(columns={'ventas':'empresas'})
 
-with st.form("eval"):
-    ventas = st.number_input("Ventas anuales (MXN)", 100000, 10_000_000, 1_000_000)
-    empleados = st.number_input("Empleados", 1, 100, 8)
-    recicla = st.slider("Nivel de economía circular", 0.0, 1.0, 0.3)
-    digital = st.slider("Nivel de digitalización", 0.0, 1.0, 0.4)
-    mujer = st.selectbox("¿Liderazgo femenino?", [0,1])
+fig2 = px.scatter(
+    state_agg,
+    x='empresas',
+    y='indice_circular',
+    size='empresas',
+    color='credito',
+    hover_name='estado',
+    title="Polos de Desarrollo: Empresas vs Economía Circular"
+)
 
-    evaluar = st.form_submit_button("Evaluar crédito")
+st.plotly_chart(fig2, use_container_width=True)
+
+# ---------------------------------------------------------
+# EVALUADOR DE CRÉDITO MIpyME (IA en tiempo real)
+# ---------------------------------------------------------
+st.subheader("✅ Evaluación Inteligente de Crédito (IA en Tiempo Real)")
+
+with st.form("evaluacion"):
+    ventas = st.number_input("Ventas anuales (MXN)", value=1_000_000)
+    empleados = st.number_input("Empleados", value=6)
+    recicla = st.slider("Economía circular", 0.0, 1.0, 0.2)
+    digital = st.slider("Digitalización", 0.0, 1.0, 0.3)
+    factura = st.selectbox("Factura electrónica", [0,1])
+    online = st.slider("Ventas online", 0.0, 1.0, 0.1)
+    mujer = st.selectbox("Liderazgo femenino", [0,1])
+
+    evaluar = st.form_submit_button("Evaluar con IA")
 
     if evaluar:
-        score = (
-            0.35 * digital +
-            0.30 * recicla +
-            0.20 * mujer +
-            0.15 * np.log1p(ventas)
-        )
+        x = pd.DataFrame([[
+            ventas, empleados, recicla, digital,
+            factura, online, mujer
+        ]], columns=FEATURES)
 
-        prob = min(score, 1)
+        prob = model.predict_proba(x)[0,1]
+        st.success(f"🔮 Probabilidad estimada de crédito: {prob:.2%}")
 
-        if prob > 0.6:
-            st.success(f"✅ Crédito aprobado con probabilidad estimada de {prob:.1%}")
-        else:
-            st.warning(f"⚠️ Riesgo crediticio — Probabilidad estimada: {prob:.1%}")
-
-# -----------------------------
+# ---------------------------------------------------------
 # SIMULADOR DE POLÍTICA PÚBLICA
-# -----------------------------
-st.subheader("📈 Simulador de Impacto en Crédito")
+# ---------------------------------------------------------
+st.subheader("📈 Simulador de Impacto en Acceso a Crédito")
 
-cap = st.slider("Cobertura de capacitación digital (%)", 0, 50, 10)
-impacto = cap * 0.002
+capacitacion = st.slider("Cobertura de capacitación digital (%)", 0, 50, 10)
+impacto = 0.002 * capacitacion
 
-actual = df["credito"].mean()
-nuevo = actual + impacto
+actual = df['credito'].mean()
+proyectado = actual + impacto
 
 st.write(f"Acceso actual: {actual:.2%}")
-st.write(f"Acceso proyectado: {nuevo:.2%}")
+st.write(f"Acceso proyectado: {proyectado:.2%}")
 
-if nuevo - actual >= 0.035:
-    st.success("✅ Se cumple la meta anual de +3.5%")
+if proyectado - actual >= 0.035:
+    st.success("✅ Se cumple la meta anual del +3.5%")
 else:
-    st.warning("⚠️ No se alcanza aún la meta del +3.5%")
+    st.warning("⚠️ No se alcanza la meta del +3.5%")
 
-st.caption("Prototipo optimizado para pitch: IA ligera, decisiones en tiempo real, sin tiempos muertos.")
+# ---------------------------------------------------------
+# IMPORTANCIA DE VARIABLES (EXPLICABILIDAD)
+# ---------------------------------------------------------
+st.subheader("🧠 Variables más importantes para otorgar crédito")
+
+imp = pd.DataFrame({
+    'Variable': FEATURES,
+    'Importancia': model.feature_importances_
+}).sort_values(by='Importancia', ascending=False)
+
+st.dataframe(imp)
+
+st.caption("Modelo basado en Random Forest optimizado para despliegue rápido en servidores gratuitos.")
