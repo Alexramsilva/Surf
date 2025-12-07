@@ -39,7 +39,7 @@ USUARIOS = {
 
 def login():
     # ✅ LOGO
-    st.image("UNRC.png", width=180)
+    st.image("UNRC.png", width=380)
 
     st.title("🔐 Acceso a MiPyME Conecta")
     usuario = st.text_input("Usuario")
