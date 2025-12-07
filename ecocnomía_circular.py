@@ -248,3 +248,15 @@ if st.button("🚪 Cerrar sesión"):
     st.rerun()
 
 st.caption("Modelo Random Forest optimizado para servidores gratuitos | Hackatón 2025")
+
+# Personalización de diseño
+st.markdown("""
+<style>
+    .stApp {
+        background-color:  #5BF58E;
+    }
+    .css-1d391kg {
+        color:  #000000;
+    }
+</style>
+""", unsafe_allow_html=True)
