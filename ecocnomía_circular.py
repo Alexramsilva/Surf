@@ -38,6 +38,9 @@ USUARIOS = {
 }
 
 def login():
+    # ✅ LOGO
+    st.image("UNRC.png", width=180)
+
     st.title("🔐 Acceso a MiPyME Conecta")
     usuario = st.text_input("Usuario")
     clave = st.text_input("Contraseña", type="password")
